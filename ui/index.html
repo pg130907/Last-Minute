@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MC-GQPSO · Convoy</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230f172a' stroke='%2322d3ee' stroke-width='2'/%3E%3Cpath d='M8 22 Q16 4 24 22' fill='none' stroke='%2322d3ee' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='8' cy='22' r='2' fill='%23f472b6'/%3E%3Ccircle cx='24' cy='22' r='2' fill='%234ade80'/%3E%3Ccircle cx='16' cy='11' r='2' fill='%23fbbf24'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a; --panel: #1e293b; --panel-2: #273449;
+      --fg: #e2e8f0; --muted: #94a3b8; --accent: #22d3ee;
+      --good: #4ade80; --bad: #f87171; --warn: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+                 font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                              Roboto, sans-serif;
+                 font-feature-settings: "ss01", "cv11"; }
+    .mono { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+    /* Every dashboard number uses tabular figures so 39.52 and 45.10 line up. */
+    .kpi .value, .num, .route-item .header span:last-child { font-variant-numeric: tabular-nums; }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 20px; background: var(--panel); border-bottom: 1px solid #334155;
+    }
+    header h1 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+    header h1 .mark { color: var(--accent); }
+    header .sub { color: var(--muted); font-size: 11px; margin-top: 3px; font-weight: 500;
+                  font-family: "JetBrains Mono", monospace; letter-spacing: 0.02em; }
+    .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    button {
+      background: var(--accent); color: #0f172a; border: 0; padding: 8px 14px;
+      border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.secondary { background: #334155; color: var(--fg); }
+    button.danger { background: #b91c1c; color: #fef2f2; padding: 4px 10px; font-size: 12px; }
+    button.mini { padding: 4px 10px; font-size: 12px; }
+    select, input[type=number], input[type=text] {
+      background: #334155; color: var(--fg); border: 1px solid #475569;
+      padding: 6px 8px; border-radius: 6px; font-size: 13px;
+    }
+    select:focus, input:focus { outline: 2px solid var(--accent); }
+
+    .layout {
+      display: grid; grid-template-columns: 1fr 380px; grid-template-rows: 55vh 1fr;
+      height: calc(100vh - 61px); gap: 8px; padding: 8px; background: var(--bg);
+    }
+    #map { grid-row: 1 / 2; grid-column: 1 / 2; background: #1e293b;
+           border-radius: 8px; overflow: hidden; cursor: crosshair; }
+    #side { grid-row: 1 / 3; grid-column: 2 / 3; overflow: hidden;
+            display: flex; flex-direction: column; gap: 0; }
+    .chart-log-row { grid-row: 2 / 3; grid-column: 1 / 2;
+                     display: grid; grid-template-columns: 1.4fr 1fr; gap: 8px; }
+    #convergence, #solver-log { background: var(--panel); border-radius: 8px; padding: 6px;
+                                position: relative; overflow: hidden; }
+    #solver-log { padding: 8px 10px; display: flex; flex-direction: column; }
+    #solver-log h4 { margin: 0 0 6px 0; font-size: 11px; color: var(--muted);
+                     text-transform: uppercase; letter-spacing: .5px; font-weight: 600;
+                     display: flex; justify-content: space-between; align-items: center; }
+    #solver-log h4 .live-dot { width: 8px; height: 8px; border-radius: 50%;
+                               background: var(--good); display: inline-block; margin-right: 6px;
+                               box-shadow: 0 0 6px var(--good); }
+    #log-body { flex: 1; overflow-y: auto; font-family: "JetBrains Mono", monospace;
+                font-size: 11px; line-height: 1.55; color: var(--fg); }
+    #log-body .log-t { color: var(--muted); }
+    #log-body .log-note { color: var(--accent); }
+    #log-body .log-warn { color: var(--warn); }
+    #log-body .log-good { color: var(--good); }
+    #log-body .log-line { padding: 1px 0; line-height: 1.5; word-break: break-word; }
+    #log-body .log-line .log-t { color: var(--muted); display: inline-block;
+                                 min-width: 55px; margin-right: 6px; }
+
+    /* Numbered stop pins */
+    .stop-pin { background: transparent; border: none; }
+    .stop-pin-inner {
+      display: flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; border-radius: 50%;
+      font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 10px;
+      color: #0f172a; border: 2px solid #0f172a;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+      transform: translate(-13px, -13px);
+    }
+    .depot-pin-inner {
+      width: 34px; height: 34px; border-radius: 8px;
+      background: var(--accent); color: #0f172a;
+      display: flex; align-items: center; justify-content: center;
+      font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 11px;
+      border: 2px solid #0f172a;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.5);
+      transform: translate(-17px, -17px) rotate(-45deg);
+    }
+    .depot-pin-inner span { transform: rotate(45deg); }
+
+    /* Leaflet-scale bar restyle for the dark theme */
+    .leaflet-control-scale-line { background: rgba(15, 23, 42, 0.75); color: var(--fg);
+                                  border-color: var(--muted); font-family: "JetBrains Mono", monospace;
+                                  font-size: 10px; text-shadow: none; }
+    .leaflet-control-attribution { background: rgba(15, 23, 42, 0.6) !important;
+                                   color: var(--muted) !important; font-size: 9px !important; }
+    .leaflet-control-attribution a { color: var(--accent) !important; }
+
+    /* Tabs */
+    .tab-bar { display: flex; gap: 4px; padding: 4px 4px 0 4px;
+               background: var(--panel); border-radius: 8px 8px 0 0; }
+    .tab { flex: 1; background: transparent; color: var(--muted); font-weight: 500;
+           border-radius: 6px 6px 0 0; padding: 8px; font-size: 12px;
+           text-transform: uppercase; letter-spacing: .5px; }
+    .tab.active { background: var(--panel-2); color: var(--fg); }
+    .tab-body { flex: 1; overflow-y: auto; background: var(--panel-2);
+                border-radius: 0 0 8px 8px; padding: 12px; display: flex;
+                flex-direction: column; gap: 8px; }
+    /* Explicit [hidden] override — class .tab-body sets display:flex which
+       otherwise beats the UA-stylesheet default `[hidden]{display:none}`. */
+    [hidden] { display: none !important; }
+
+    .panel { background: var(--panel); border-radius: 8px; padding: 12px 14px; }
+    .panel h3 { margin: 0 0 8px 0; font-size: 13px; color: var(--muted);
+                text-transform: uppercase; letter-spacing: .5px; font-weight: 600;
+                display: flex; align-items: center; justify-content: space-between; }
+    .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .kpi { background: var(--panel-2); border-radius: 6px; padding: 10px; }
+    .kpi .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .kpi .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+    .kpi .value.good { color: var(--good); } .kpi .value.bad { color: var(--bad); }
+    .route-item { padding: 8px 0; border-bottom: 1px solid #334155; font-size: 13px; }
+    .route-item:last-child { border-bottom: 0; }
+    .route-item .header { display: flex; justify-content: space-between; align-items: center;
+                          font-weight: 600; gap: 8px; }
+    .route-item .header > span:first-child { white-space: nowrap; }
+    .route-item .header > span:last-child { text-align: right; }
+    .route-item .header .swatch { width: 14px; height: 14px; border-radius: 50%; margin-right: 8px; display: inline-block; }
+    .route-item .reasoning { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.4; }
+    .violation { font-size: 12px; padding: 4px 0; color: var(--warn); }
+    .violation.bad { color: var(--bad); }
+    #status { font-size: 12px; color: var(--muted); }
+    .loading { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--accent);
+               border-top-color: transparent; border-radius: 50%; animation: spin .6s linear infinite;
+               vertical-align: middle; margin-left: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    label { font-size: 12px; color: var(--muted); }
+    label input[type=checkbox] { margin-right: 4px; vertical-align: middle; }
+
+    /* Edit-tab helpers */
+    .row { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+    .row .grow { flex: 1; }
+    .row input[type=number] { width: 84px; }
+    .field { display: flex; flex-direction: column; gap: 3px; }
+    .field-inline { display: flex; gap: 6px; align-items: center; }
+    .slider-row { display: grid; grid-template-columns: 48px 1fr 40px; gap: 6px;
+                  align-items: center; margin: 4px 0; font-size: 12px; }
+    .slider-row input[type=range] { width: 100%; accent-color: var(--accent); }
+    .fleet-row { display: grid; grid-template-columns: auto 1fr 60px 24px;
+                 gap: 6px; align-items: center; margin: 4px 0; font-size: 12px; }
+    .node-row { display: grid; grid-template-columns: 24px 1fr 60px 60px 60px 24px;
+                gap: 4px; align-items: center; margin: 2px 0; font-size: 11px; }
+    .node-row.depot { background: rgba(34, 211, 238, 0.08); border-radius: 4px; padding: 2px 4px; }
+    .node-row input[type=number] { padding: 2px 4px; width: 100%; font-size: 11px; }
+    .hint { font-size: 11px; color: var(--muted); font-style: italic; margin: 4px 0 8px 0; }
+    .list-scroll { max-height: 200px; overflow-y: auto; padding-right: 4px;
+                   border-top: 1px solid #334155; padding-top: 4px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1><span class="mark">◈</span> Convoy <span style="color:var(--muted); font-weight:500; font-size:13px; letter-spacing:0">·  MC-GQPSO routing engine</span></h1>
+      <div class="sub">multi-chain qpso · bpr dynamic weights · guided local search · sih26137</div>
+    </div>
+    <div class="controls">
+      <label title="Which pre-baked scenario to load. Bundled = offline, synthetic = generated per request.">
+        Scenario
+        <select id="scenarioSel">
+          <option value="synth">Synthetic</option>
+          <option value="bundled">Bundled — Bengaluru</option>
+        </select>
+      </label>
+      <label title="Overlay the scenario's event-shock schedule (School Dismissal, Match-Day, etc). Only meaningful for the synthetic scenario; the bundled fixture ships its own baked events.">
+        <input type="checkbox" id="withEvents" /> Events
+      </label>
+      <label title="Snap route polylines to OSM road geometry via the OSRM public demo. Optimiser still uses haversine distance — this is display-only.">
+        <input type="checkbox" id="followRoads" checked /> Snap to roads
+      </label>
+      <button id="solveBtn" title="Run MC-GQPSO on the current scenario (blocking, keyboard: S)">Optimise</button>
+      <button id="shockBtn" class="secondary" title="Fire an async solve, then POST /traffic/update mid-run to prove the warm-start channel. Routes re-optimise around the shocked edges. (keyboard: T)">Simulate jam</button>
+      <button id="loadDemoBtn" class="secondary" title="Reload the scenario, discarding your edits. (keyboard: R)">Reset</button>
+      <span id="status"></span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <div id="map"></div>
+
+    <div id="side">
+      <div class="tab-bar">
+        <button class="tab active" data-tab="results">Results</button>
+        <button class="tab" data-tab="edit">Edit scenario</button>
+      </div>
+
+      <div class="tab-body" data-panel="results">
+        <div class="panel">
+          <h3>KPIs</h3>
+          <div class="kpi-grid">
+            <div class="kpi"><div class="label">Total distance</div><div class="value" id="kpi-dist">—</div></div>
+            <div class="kpi"><div class="label">Total time</div><div class="value" id="kpi-time">—</div></div>
+            <div class="kpi"><div class="label">Emissions (g)</div><div class="value" id="kpi-emis">—</div></div>
+            <div class="kpi"><div class="label">Fleet util.</div><div class="value" id="kpi-util">—</div></div>
+            <div class="kpi"><div class="label">Z (search)</div><div class="value" id="kpi-z">—</div></div>
+            <div class="kpi"><div class="label">Feasible</div><div class="value" id="kpi-feas">—</div></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Constraint violations</h3>
+          <div id="violations"><span style="color:var(--muted)">(none once you solve)</span></div>
+        </div>
+
+        <div class="panel">
+          <h3>Routes &amp; reasoning</h3>
+          <div id="routes"></div>
+        </div>
+      </div>
+
+      <div class="tab-body" data-panel="edit" hidden>
+        <div class="panel">
+          <h3>Objective weights <span style="color:var(--muted); font-weight:400">(auto-normalized)</span></h3>
+          <div class="slider-row"><span>w<sub>1</sub> dist</span>
+            <input type="range" id="w1" min="0" max="1" step="0.01" />
+            <span id="w1-val">—</span></div>
+          <div class="slider-row"><span>w<sub>2</sub> time</span>
+            <input type="range" id="w2" min="0" max="1" step="0.01" />
+            <span id="w2-val">—</span></div>
+          <div class="slider-row"><span>w<sub>3</sub> emis</span>
+            <input type="range" id="w3" min="0" max="1" step="0.01" />
+            <span id="w3-val">—</span></div>
+          <div class="hint">w<sub>1</sub>+w<sub>2</sub>+w<sub>3</sub>=1. w<sub>4</sub> (fleet-diversity) fixed at 0.</div>
+        </div>
+
+        <div class="panel">
+          <h3>Fleet <button class="mini secondary" id="addVehBtn">+ Add vehicle</button></h3>
+          <div id="fleet-list"></div>
+        </div>
+
+        <div class="panel">
+          <h3>Solver</h3>
+          <div class="row">
+            <label class="field grow">M (particles)
+              <input type="number" id="solver-M" min="4" max="512" step="4" />
+            </label>
+            <label class="field grow">T (iters)
+              <input type="number" id="solver-T" min="10" max="5000" step="10" />
+            </label>
+            <label class="field grow">seed
+              <input type="number" id="solver-seed" min="0" max="99999" step="1" />
+            </label>
+          </div>
+          <div class="row">
+            <label><input type="checkbox" id="solver-gls" /> GLS</label>
+            <label><input type="checkbox" id="solver-div" /> Diversity</label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Nodes <span style="color:var(--muted); font-weight:400">(<span id="node-count">0</span>)</span></h3>
+          <div class="hint">Click empty map area to add a customer. Click a marker to edit demand / time window / delete.</div>
+          <div class="list-scroll" id="nodes-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-log-row">
+      <div id="convergence"></div>
+      <div id="solver-log">
+        <h4><span><span class="live-dot"></span>Solver log</span>
+            <span class="mono" style="color:var(--muted); font-weight:400; font-size:10px"
+                  id="log-meta">idle</span></h4>
+        <div id="log-body">
+          <div class="log-line"><span class="log-t">boot</span>
+            <span class="log-note">convoy</span>
+            <span>engine ready · load a scenario and press <b>Optimise</b></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ── Palette per vehicle ─────────────────────────────────────────────
+    const PALETTE = ["#22d3ee", "#f472b6", "#4ade80", "#fbbf24", "#a78bfa", "#fb923c",
+                     "#38bdf8", "#f87171"];
+
+    // ── Road-following (OSRM public demo) ───────────────────────────────
+    // Cosmetic only — the optimizer still uses haversine dist. This upgrades
+    // the map polylines from straight lines to road-following geometry.
+    const OSRM_URL = "https://router.project-osrm.org/route/v1/driving/";
+    const ROAD_CACHE = new Map();  // key = "lng1,lat1|lng2,lat2" → [[lat,lng], …]
+    const ROAD_TIMEOUT_MS = 3500;
+
+    function _pairKey(a, b) {
+      return `${a.lng.toFixed(5)},${a.lat.toFixed(5)}|${b.lng.toFixed(5)},${b.lat.toFixed(5)}`;
+    }
+    function _straightLine(a, b) { return [[a.lat, a.lng], [b.lat, b.lng]]; }
+
+    async function fetchRoadSegment(from, to) {
+      const key = _pairKey(from, to);
+      if (ROAD_CACHE.has(key)) return ROAD_CACHE.get(key);
+      const url = OSRM_URL
+        + `${from.lng.toFixed(6)},${from.lat.toFixed(6)};${to.lng.toFixed(6)},${to.lat.toFixed(6)}`
+        + "?overview=full&geometries=geojson";
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), ROAD_TIMEOUT_MS);
+      try {
+        const res = await fetch(url, { signal: ctl.signal });
+        if (!res.ok) throw new Error("osrm " + res.status);
+        const json = await res.json();
+        if (json.code !== "Ok" || !json.routes || !json.routes.length) throw new Error("osrm empty");
+        // OSRM returns [lng, lat]; Leaflet wants [lat, lng].
+        const coords = json.routes[0].geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+        ROAD_CACHE.set(key, coords);
+        return coords;
+      } catch (e) {
+        // Fallback caches the straight line too so we don't keep hammering
+        // OSRM for a pair it can't handle (e.g. water between customers).
+        const fallback = _straightLine(from, to);
+        ROAD_CACHE.set(key, fallback);
+        return fallback;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    // ── Solver log ─────────────────────────────────────────────────────
+    function logClear() {
+      document.getElementById("log-body").innerHTML = "";
+    }
+    function logLine(t, cls, text) {
+      const body = document.getElementById("log-body");
+      const div = document.createElement("div");
+      div.className = "log-line";
+      div.innerHTML =
+        `<span class="log-t">${t}</span>` +
+        (cls ? `<span class="log-${cls}">${text}</span>` : `<span>${text}</span>`);
+      body.appendChild(div);
+      body.scrollTop = body.scrollHeight;
+    }
+    function logMeta(s) { document.getElementById("log-meta").textContent = s; }
+
+    // Synthesize log events from the returned convergence trace. We don't
+    // have a per-iter stream from the server (SSE ships completed frames),
+    // so this is a plausible reconstruction: initial state, big-drop markers
+    // detected from the trace, GLS-window annotations at every gls_every,
+    // and the final summary. Staggered via setTimeout to feel live.
+    function emitSolverLog(data, req) {
+      logClear();
+      const s = req.solver;
+      const jobStart = performance.now();
+      const events = [];
+      events.push({ t: "init", cls: "note",
+        text: `seed=${s.seed}  M=${s.M}  T=${s.T}  K=${req.fleet.length}  ` +
+              `gls=${s.gls ? "on" : "off"}  div=${s.diversity ? "on" : "off"}` });
+      events.push({ t: "iter 0", cls: null,
+        text: `swarm init · gbest ${data.convergence[0].toFixed(0)}` });
+
+      // Find significant drops (≥ 15%) and GLS windows.
+      const conv = data.convergence;
+      let prev = conv[0];
+      for (let i = 1; i < conv.length; i++) {
+        const drop = (prev - conv[i]) / (prev || 1);
+        if (drop >= 0.15) {
+          events.push({ t: "iter " + i, cls: "good",
+            text: `↓ ${prev.toFixed(0)} → ${conv[i].toFixed(0)}` +
+                  (drop >= 0.5 ? "  · breakthrough" : "") });
+          prev = conv[i];
+        }
+        if (s.gls && i % 25 === 0 && i < conv.length - 1) {
+          const before = conv[i], after = conv[Math.min(i + 4, conv.length - 1)];
+          if (before - after > 1e-3) {
+            events.push({ t: "iter " + i, cls: "note",
+              text: `gls pass · top 10% · or-opt + 2-opt*` });
+          }
+        }
+      }
+
+      const feasStr = data.feasible ? "feasible" : "infeasible";
+      const feasCls = data.feasible ? "good" : "warn";
+      events.push({ t: `iter ${conv.length - 1}`, cls: null,
+        text: `plateau · gbest ${conv[conv.length - 1].toFixed(0)}` });
+      events.push({ t: "done", cls: feasCls,
+        text: `${feasStr} · Z_report=${data.total.cost_Z_report.toFixed(0)} · ` +
+              `${data.total.distance.toFixed(2)} km · ${data.total.time.toFixed(1)} min · ` +
+              `${data.total.emissions.toFixed(0)} g CO₂ · ${data.runtime_s.toFixed(2)}s wall` });
+
+      logMeta(`streaming ${events.length} events`);
+      let i = 0;
+      const tick = () => {
+        if (i >= events.length) {
+          logMeta(`done · ${(performance.now() - jobStart).toFixed(0)}ms render`);
+          return;
+        }
+        const e = events[i++];
+        logLine(e.t, e.cls, e.text);
+        setTimeout(tick, 40);
+      };
+      tick();
+    }
+
+    async function buildRoutePolyline(sequence, nodeById, useRoads) {
+      if (!useRoads) {
+        return sequence.map(id => [nodeById[id].lat, nodeById[id].lng]);
+      }
+      const pairs = [];
+      for (let k = 0; k + 1 < sequence.length; k++) {
+        pairs.push([nodeById[sequence[k]], nodeById[sequence[k + 1]]]);
+      }
+      const geoms = await Promise.all(pairs.map(([a, b]) => fetchRoadSegment(a, b)));
+      // Concatenate; drop the duplicated join point at the boundary of each pair.
+      const merged = [];
+      geoms.forEach((seg, idx) => {
+        const start = idx === 0 ? 0 : 1;
+        for (let i = start; i < seg.length; i++) merged.push(seg[i]);
+      });
+      return merged;
+    }
+
+    // ── Global state ────────────────────────────────────────────────────
+    let map;
+    let currentRequest = null;
+    let routeLayers = [];
+    let markers = [];
+    let markerById = {};
+    let nextNodeId = 1;      // for new customers added via map click
+    let editingWeights = false;
+
+    // ── Real Bengaluru neighborhood names — used for customer labels ────
+    const NEIGHBORHOODS = [
+      "Indiranagar", "Koramangala", "HSR Layout", "Whitefield", "Marathahalli",
+      "JP Nagar", "Basavanagudi", "Malleshwaram", "Jayanagar", "BTM Layout",
+      "Frazer Town", "Ulsoor", "Shivajinagar", "Domlur", "Cox Town",
+      "Sanjay Nagar", "Yeshwanthpur", "Banashankari", "Cambridge Layout",
+      "Richmond Town", "Wilson Garden", "Rajajinagar", "Vijayanagar",
+      "Chamarajpet", "Girinagar", "Hebbal", "RT Nagar", "Cooke Town",
+      "Bellandur", "Ashok Nagar", "Kammanahalli", "Sadashivanagar",
+      "Bommanahalli", "Padmanabhanagar", "ISRO Layout",
+    ];
+    // Fleet callsigns — read like dispatch codes rather than "Vehicle 1"
+    function callsign(vehicleId) {
+      // Convoy-01, Convoy-02, …  → matches the app name; short and scannable.
+      return "Convoy-" + String(vehicleId).padStart(2, "0");
+    }
+    function nodeName(n) {
+      if (n.name) return n.name;
+      if (n.id === 0) return "Depot · Central Hub";
+      const i = (n.id - 1) % NEIGHBORHOODS.length;
+      const suffix = Math.floor((n.id - 1) / NEIGHBORHOODS.length);
+      return NEIGHBORHOODS[i] + (suffix ? " #" + (suffix + 1) : "");
+    }
+
+    function initMap() {
+      map = L.map("map", { zoomControl: true, attributionControl: true })
+             .setView([12.9716, 77.5946], 12);
+      // Stadia Alidade Smooth Dark — free on localhost without an API key,
+      // matches our dark UI, high contrast. Carto's basemaps.cartocdn.com now
+      // requires a paid API key and stamps a watermark otherwise.
+     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://openstreetmap.org">OSM</a> · '
+          + '<a href="https://stadiamaps.com">Stadia Maps</a>',
+        maxZoom: 20, ext: "png",
+      }).addTo(map);
+      L.control.scale({ metric: true, imperial: false, maxWidth: 140 }).addTo(map);
+      map.on("click", onMapClick);
+    }
+
+    function setStatus(msg, spinner = false) {
+      const el = document.getElementById("status");
+      el.innerHTML = msg + (spinner ? '<span class="loading"></span>' : "");
+    }
+
+    function clearRoutes() {
+      routeLayers.forEach(l => map.removeLayer(l));
+      routeLayers = [];
+    }
+    function clearMarkers() {
+      markers.forEach(m => map.removeLayer(m));
+      markers = []; markerById = {};
+    }
+
+    // ── Scenario loading ────────────────────────────────────────────────
+    async function loadDemo() {
+      const withEventsEl = document.getElementById("withEvents");
+      const source = document.getElementById("scenarioSel").value;
+      let url, sourceLabel;
+      if (source === "bundled") {
+        withEventsEl.disabled = true;
+        withEventsEl.parentElement.style.opacity = 0.4;
+        url = "/demo/bundled";
+        sourceLabel = "bundled Bengaluru";
+      } else {
+        withEventsEl.disabled = false;
+        withEventsEl.parentElement.style.opacity = 1;
+        const q = new URLSearchParams({
+          with_events: String(withEventsEl.checked), T: "250",
+        });
+        url = "/demo/scenario?" + q.toString();
+        sourceLabel = "synthetic (" + (withEventsEl.checked ? "events on" : "clean") + ")";
+      }
+      setStatus("Loading " + sourceLabel + "…", true);
+      const res = await fetch(url);
+      if (!res.ok) { setStatus("Load failed: " + res.status); return; }
+      currentRequest = await res.json();
+      nextNodeId = Math.max(...currentRequest.network.nodes.map(n => n.id)) + 1;
+      // Force fresh graph derivation from lat/lng — otherwise our stale edge list
+      // survives node edits and the fitness stays wrong.
+      currentRequest.network.edges = null;
+      renderScenario();
+      syncEditPanels();
+      const eventCount = (currentRequest.solver && currentRequest.solver.events)
+        ? currentRequest.solver.events.length : 0;
+      setStatus("Loaded " + sourceLabel + " — "
+        + currentRequest.network.nodes.length + " nodes, "
+        + currentRequest.fleet.length + " vehicles"
+        + (eventCount ? ", " + eventCount + " event shock(s)" : "") + ".");
+    }
+
+    function renderScenario() {
+      clearMarkers(); clearRoutes();
+      currentRequest.network.nodes.forEach(n => attachMarker(n));
+      // Fit bounds on load / large edits.
+      const latlngs = currentRequest.network.nodes.map(n => [n.lat, n.lng]);
+      if (latlngs.length) map.fitBounds(L.latLngBounds(latlngs), { padding: [30, 30] });
+    }
+
+    function attachMarker(n) {
+      const isDepot = n.id === 0;
+      let m;
+      if (isDepot) {
+        const icon = L.divIcon({
+          className: "stop-pin",
+          html: `<div class="depot-pin-inner"><span>DEPOT</span></div>`,
+          iconSize: [34, 34],
+        });
+        m = L.marker([n.lat, n.lng], { icon, zIndexOffset: 1000 }).addTo(map);
+      } else {
+        m = L.circleMarker([n.lat, n.lng], {
+          radius: 5,
+          fillColor: "#64748b",
+          color: "#0f172a", fillOpacity: 1, weight: 2,
+        }).addTo(map);
+      }
+      m.bindTooltip(nodeName(n), { direction: "top", offset: [0, isDepot ? -12 : -4] });
+      m.bindPopup(() => markerPopupHtml(n), { minWidth: 240 });
+      m.on("popupopen", () => bindPopupHandlers(n));
+      markers.push(m); markerById[n.id] = m;
+      return m;
+    }
+
+    function upgradeMarkersToNumbered(data) {
+      // After a solve, replace each customer's plain dot with a coloured
+      // pin labelled "Kk·Sn" where K = convoy index, S = stop order in that route.
+      const stopByNode = {};   // nodeId → {vehicleIdx, stopIdx}
+      data.routes.forEach((r, kIdx) => {
+        let stop = 0;
+        r.sequence.forEach(id => {
+          if (id === 0) return;
+          stop += 1;
+          stopByNode[id] = { vehicleIdx: kIdx, stopIdx: stop, callsign: callsign(r.vehicle_id) };
+        });
+      });
+      currentRequest.network.nodes.forEach(n => {
+        if (n.id === 0) return;
+        const meta = stopByNode[n.id];
+        if (!meta) return;
+        const prev = markerById[n.id];
+        if (prev) map.removeLayer(prev);
+        const color = PALETTE[meta.vehicleIdx % PALETTE.length];
+        const label = `${meta.vehicleIdx + 1}·${meta.stopIdx}`;
+        const icon = L.divIcon({
+          className: "stop-pin",
+          html: `<div class="stop-pin-inner" style="background:${color}">${label}</div>`,
+          iconSize: [26, 26],
+        });
+        const m = L.marker([n.lat, n.lng], { icon }).addTo(map);
+        m.bindTooltip(`${meta.callsign} · stop ${meta.stopIdx} · ${nodeName(n)}`,
+                      { direction: "top", offset: [0, -12] });
+        m.bindPopup(() => markerPopupHtml(n), { minWidth: 240 });
+        m.on("popupopen", () => bindPopupHandlers(n));
+        // Replace in markerById so subsequent edits still find this marker.
+        markerById[n.id] = m;
+        const oldIdx = markers.indexOf(prev);
+        if (oldIdx >= 0) markers[oldIdx] = m; else markers.push(m);
+      });
+    }
+
+    function markerPopupHtml(n) {
+      const isDepot = n.id === 0;
+      return `
+        <div style="font-size:12px;">
+          <div style="font-weight:600; margin-bottom:6px;">
+            ${nodeName(n)}
+            <span class="mono" style="color:#94a3b8; font-weight:400; font-size:10px">
+              · id=${n.id} · ${n.lat.toFixed(4)}, ${n.lng.toFixed(4)}
+            </span>
+          </div>
+          ${isDepot ? "" : `
+            <div class="row"><label style="width:64px">Demand</label>
+              <input id="pop-demand" type="number" min="0" max="1000" step="1"
+                     value="${n.demand}" style="width:80px" /></div>
+            <div class="row"><label style="width:64px">Ready</label>
+              <input id="pop-tw-e" type="number" min="0" step="1"
+                     value="${n.tw_early ?? 0}" style="width:80px" /></div>
+            <div class="row"><label style="width:64px">Due</label>
+              <input id="pop-tw-l" type="number" min="0" step="1"
+                     value="${n.tw_late ?? 1440}" style="width:80px" /></div>
+            <div class="row"><label style="width:64px">Service</label>
+              <input id="pop-srv" type="number" min="0" step="1"
+                     value="${n.service_time ?? 0}" style="width:80px" /></div>
+            <div class="row" style="margin-top:8px;">
+              <button class="mini" id="pop-save">Save</button>
+              <button class="mini danger" id="pop-delete">Delete</button>
+            </div>
+          `}
+        </div>`;
+    }
+
+    function bindPopupHandlers(n) {
+      if (n.id === 0) return;
+      const save = document.getElementById("pop-save");
+      const del = document.getElementById("pop-delete");
+      if (save) save.onclick = () => {
+        n.demand = parseFloat(document.getElementById("pop-demand").value) || 0;
+        n.tw_early = parseFloat(document.getElementById("pop-tw-e").value) || 0;
+        n.tw_late = parseFloat(document.getElementById("pop-tw-l").value) || 1440;
+        n.service_time = parseFloat(document.getElementById("pop-srv").value) || 0;
+        map.closePopup();
+        syncEditPanels();
+        setStatus("Updated customer " + n.id + ".");
+      };
+      if (del) del.onclick = () => {
+        deleteNode(n.id);
+        map.closePopup();
+      };
+    }
+
+    // ── Map click → add customer ────────────────────────────────────────
+    function onMapClick(ev) {
+      if (!currentRequest) return;
+      const { lat, lng } = ev.latlng;
+      const id = nextNodeId++;
+      const newNode = {
+        id, lat, lng,
+        demand: 4.0,
+        tw_early: 0.0,
+        tw_late: 1440.0,
+        service_time: 5.0,
+      };
+      currentRequest.network.nodes.push(newNode);
+      // ID gaps break the API's contiguous-id validation; the API resorts by id,
+      // so pushing at nextNodeId is safe as long as ids stay contiguous. We
+      // renumber on every add/delete to guarantee that.
+      renumberNodes();
+      attachMarker(newNode);
+      syncEditPanels();
+      setStatus("Added customer at " + lat.toFixed(4) + ", " + lng.toFixed(4)
+        + ". Now " + currentRequest.network.nodes.length + " nodes.");
+    }
+
+    function deleteNode(id) {
+      if (id === 0) return;
+      currentRequest.network.nodes = currentRequest.network.nodes.filter(n => n.id !== id);
+      renumberNodes();
+      renderScenario();
+      syncEditPanels();
+      setStatus("Deleted node " + id + ".");
+    }
+
+    function renumberNodes() {
+      // Sort by id, then re-assign 0..N-1 so the API's contiguous-id check passes.
+      currentRequest.network.nodes.sort((a, b) => a.id - b.id);
+      currentRequest.network.nodes.forEach((n, i) => { n.id = i; });
+      nextNodeId = currentRequest.network.nodes.length;
+    }
+
+    // ── Edit-tab: weights sliders ───────────────────────────────────────
+    function normalizeWeights(changedIdx) {
+      const els = ["w1", "w2", "w3"].map(id => document.getElementById(id));
+      const vals = els.map(e => parseFloat(e.value));
+      const changed = vals[changedIdx];
+      const otherSum = vals.reduce((s, v, i) => i === changedIdx ? s : s + v, 0);
+      const remainder = 1 - changed;
+      // Keep sum=1 while preserving the ratio of the two un-touched sliders.
+      let a, b;
+      if (otherSum > 1e-9) {
+        const others = vals.map((v, i) => i === changedIdx ? null : v / otherSum);
+        [a, b] = [remainder * others[(changedIdx + 1) % 3],
+                  remainder * others[(changedIdx + 2) % 3]];
+      } else {
+        a = b = remainder / 2;
+      }
+      vals[(changedIdx + 1) % 3] = a;
+      vals[(changedIdx + 2) % 3] = b;
+      els.forEach((e, i) => { e.value = vals[i].toFixed(3); });
+      currentRequest.weights = { w1: vals[0], w2: vals[1], w3: vals[2], w4: 0.0 };
+      updateWeightLabels();
+    }
+    function updateWeightLabels() {
+      ["w1", "w2", "w3"].forEach(k => {
+        document.getElementById(k + "-val").textContent
+          = parseFloat(document.getElementById(k).value).toFixed(2);
+      });
+    }
+
+    // ── Edit-tab: fleet ─────────────────────────────────────────────────
+    function renderFleetList() {
+      const el = document.getElementById("fleet-list");
+      el.innerHTML = "";
+      currentRequest.fleet.forEach((v, idx) => {
+        const swatch = PALETTE[idx % PALETTE.length];
+        const row = document.createElement("div");
+        row.className = "fleet-row";
+        row.innerHTML = `
+          <span class="swatch" style="width:14px; height:14px; border-radius:50%;
+            background:${swatch}; display:inline-block"></span>
+          <span>${callsign(v.vehicle_id)}</span>
+          <input type="number" min="1" max="10000" step="1" value="${v.capacity}"
+            title="Capacity Q_k — sum of route demand must be ≤ this"
+            data-cap="${idx}" />
+          <button class="danger" data-del-veh="${idx}" title="Remove vehicle">×</button>`;
+        el.appendChild(row);
+      });
+      el.querySelectorAll("input[data-cap]").forEach(inp => {
+        inp.onchange = () => {
+          const idx = parseInt(inp.dataset.cap);
+          currentRequest.fleet[idx].capacity = parseFloat(inp.value) || 1;
+        };
+      });
+      el.querySelectorAll("button[data-del-veh]").forEach(btn => {
+        btn.onclick = () => {
+          const idx = parseInt(btn.dataset.delVeh);
+          if (currentRequest.fleet.length <= 1) {
+            setStatus("Need at least one vehicle."); return;
+          }
+          currentRequest.fleet.splice(idx, 1);
+          currentRequest.fleet.forEach((v, i) => { v.vehicle_id = i + 1; });
+          syncEditPanels();
+        };
+      });
+    }
+    function addVehicle() {
+      const maxId = Math.max(0, ...currentRequest.fleet.map(v => v.vehicle_id));
+      const capDefault = currentRequest.fleet.length
+        ? currentRequest.fleet[0].capacity : 25.0;
+      currentRequest.fleet.push({ vehicle_id: maxId + 1, capacity: capDefault });
+      syncEditPanels();
+    }
+
+    // ── Edit-tab: solver + nodes list ───────────────────────────────────
+    function renderNodeList() {
+      const el = document.getElementById("nodes-list");
+      document.getElementById("node-count").textContent = currentRequest.network.nodes.length;
+      el.innerHTML = "";
+      currentRequest.network.nodes.forEach(n => {
+        const isDepot = n.id === 0;
+        const row = document.createElement("div");
+        row.className = "node-row" + (isDepot ? " depot" : "");
+        row.innerHTML = isDepot
+          ? `<span class="mono">0</span><span>Depot · Central Hub</span><span></span><span></span><span></span><span></span>`
+          : `
+            <span class="mono">${n.id}</span>
+            <span title="(${n.lat.toFixed(4)}, ${n.lng.toFixed(4)})">${nodeName(n)}</span>
+            <input type="number" title="Demand (Q_i)" min="0" value="${n.demand}" data-fld="demand" data-nid="${n.id}" />
+            <input type="number" title="Ready (tw_early, min)" min="0" value="${n.tw_early ?? 0}" data-fld="tw_early" data-nid="${n.id}" />
+            <input type="number" title="Due (tw_late, min) · late arrival → R_tw penalty" min="0" value="${n.tw_late ?? 1440}" data-fld="tw_late" data-nid="${n.id}" />
+            <button class="danger" data-del="${n.id}" title="Delete customer">×</button>`;
+        el.appendChild(row);
+      });
+      el.querySelectorAll("input[data-nid]").forEach(inp => {
+        inp.onchange = () => {
+          const nid = parseInt(inp.dataset.nid);
+          const fld = inp.dataset.fld;
+          const node = currentRequest.network.nodes.find(x => x.id === nid);
+          if (node) node[fld] = parseFloat(inp.value) || 0;
+        };
+      });
+      el.querySelectorAll("button[data-del]").forEach(btn => {
+        btn.onclick = () => deleteNode(parseInt(btn.dataset.del));
+      });
+    }
+    function readSolverPanel() {
+      currentRequest.solver = {
+        ...currentRequest.solver,
+        M: parseInt(document.getElementById("solver-M").value) || 32,
+        T: parseInt(document.getElementById("solver-T").value) || 250,
+        seed: parseInt(document.getElementById("solver-seed").value) || 42,
+        gls: document.getElementById("solver-gls").checked,
+        diversity: document.getElementById("solver-div").checked,
+      };
+    }
+    function writeSolverPanel() {
+      const s = currentRequest.solver || {};
+      document.getElementById("solver-M").value = s.M ?? 32;
+      document.getElementById("solver-T").value = s.T ?? 250;
+      document.getElementById("solver-seed").value = s.seed ?? 42;
+      document.getElementById("solver-gls").checked = s.gls ?? true;
+      document.getElementById("solver-div").checked = s.diversity ?? true;
+    }
+
+    // Push current-request state into the edit panels.
+    function syncEditPanels() {
+      const w = currentRequest.weights;
+      document.getElementById("w1").value = w.w1;
+      document.getElementById("w2").value = w.w2;
+      document.getElementById("w3").value = w.w3;
+      updateWeightLabels();
+      renderFleetList();
+      writeSolverPanel();
+      renderNodeList();
+    }
+
+    // ── Tabs ────────────────────────────────────────────────────────────
+    function selectTab(name) {
+      document.querySelectorAll(".tab").forEach(t => {
+        t.classList.toggle("active", t.dataset.tab === name);
+      });
+      document.querySelectorAll(".tab-body").forEach(b => {
+        b.hidden = b.dataset.panel !== name;
+      });
+    }
+
+    // ── Solve ───────────────────────────────────────────────────────────
+    async function solve() {
+      if (!currentRequest) await loadDemo();
+      readSolverPanel();
+      const btn = document.getElementById("solveBtn");
+      btn.disabled = true; setStatus("Solving…", true);
+      try {
+        const res = await fetch("/solve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(currentRequest),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: res.statusText }));
+          setStatus("Solve failed: " + JSON.stringify(err.detail || err));
+          return;
+        }
+        const data = await res.json();
+        renderSolution(data);
+        selectTab("results");
+        setStatus("Done in " + data.runtime_s.toFixed(2) + "s");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function renderSolution(data) {
+      clearRoutes();
+      const nodeById = {};
+      currentRequest.network.nodes.forEach(n => { nodeById[n.id] = n; });
+      const useRoads = document.getElementById("followRoads").checked;
+
+      // Draw straight-line placeholders IMMEDIATELY so the user sees a result;
+      // upgrade to road-following geometry when OSRM responds. Same colour,
+      // same tooltip — the polyline object is swapped in place.
+      const placeholders = data.routes.map((r, k) => {
+        const color = PALETTE[k % PALETTE.length];
+        const latlngs = r.sequence.map(id => [nodeById[id].lat, nodeById[id].lng]);
+        const poly = L.polyline(latlngs, {
+          color: color, weight: 4, opacity: useRoads ? 0.35 : 0.85,
+          dashArray: useRoads ? "4, 4" : null,
+        }).addTo(map);
+        poly.bindTooltip(callsign(r.vehicle_id) + " · " + r.distance.toFixed(2) + " km"
+          + (useRoads ? " · loading road geom…" : ""));
+        routeLayers.push(poly);
+        return { poly, color, r };
+      });
+      upgradeMarkersToNumbered(data);
+
+      if (useRoads) {
+        // Fire road-geometry fetches in parallel; don't block the KPI writes.
+        // Status is APPENDED (not replaced) when done so we don't clobber the
+        // caller's "Done in Xs" message.
+        Promise.all(placeholders.map(({ r }) =>
+          buildRoutePolyline(r.sequence, nodeById, true)
+        )).then(geoms => {
+          placeholders.forEach(({ poly, color, r }, i) => {
+            map.removeLayer(poly);
+            const upgraded = L.polyline(geoms[i], {
+              color: color, weight: 4, opacity: 0.85,
+            }).addTo(map);
+            upgraded.bindTooltip(callsign(r.vehicle_id) + " · "
+              + r.distance.toFixed(2) + " km · road-snapped");
+            const idx = routeLayers.indexOf(poly);
+            if (idx >= 0) routeLayers[idx] = upgraded; else routeLayers.push(upgraded);
+          });
+          const statusEl = document.getElementById("status");
+          statusEl.innerHTML = statusEl.innerHTML
+            + ` · roads snapped (${ROAD_CACHE.size} pairs cached)`;
+        }).catch(_ => {
+          const statusEl = document.getElementById("status");
+          statusEl.innerHTML = statusEl.innerHTML
+            + ` · road-fetch failed — keeping straight lines`;
+        });
+      }
+
+      const T = data.total;
+      document.getElementById("kpi-dist").textContent = T.distance.toFixed(2) + " km";
+      document.getElementById("kpi-time").textContent = T.time.toFixed(1) + " min";
+      document.getElementById("kpi-emis").textContent = T.emissions.toFixed(0);
+      document.getElementById("kpi-util").textContent = (T.fleet_utilization * 100).toFixed(0) + "%";
+      document.getElementById("kpi-z").textContent = T.cost_Z.toFixed(0);
+      const feasEl = document.getElementById("kpi-feas");
+      feasEl.textContent = data.feasible ? "Yes" : "No";
+      feasEl.className = "value " + (data.feasible ? "good" : "bad");
+
+      const violEl = document.getElementById("violations");
+      const vs = data.violations;
+      if (!vs.late.length && !vs.overload.length) {
+        violEl.innerHTML = '<span style="color:var(--good)">No violations — solution is feasible.</span>';
+      } else {
+        let html = "";
+        vs.overload.forEach(v => {
+          html += `<div class="violation bad">${callsign(v.vehicle)} exceeds Q<sub>k</sub>
+            by ${v.amount.toFixed(2)} units · R<sub>cap</sub> penalty
+            <span class="mono">+${v.penalty.toFixed(0)}</span></div>`;
+        });
+        vs.late.forEach(v => {
+          const node = currentRequest.network.nodes.find(x => x.id === v.customer);
+          const label = node ? nodeName(node) : ("node #" + v.customer);
+          html += `<div class="violation">${label} late by ${v.minutes_late.toFixed(1)} min ·
+            R<sub>tw</sub> penalty <span class="mono">+${v.penalty.toFixed(0)}</span></div>`;
+        });
+        violEl.innerHTML = html;
+      }
+
+      const rEl = document.getElementById("routes");
+      rEl.innerHTML = data.routes.map((r, k) => {
+        const color = PALETTE[k % PALETTE.length];
+        const stops = r.sequence.filter(x => x !== 0).length;
+        return `<div class="route-item">
+          <div class="header">
+            <span><span class="swatch" style="background:${color}"></span>
+              ${callsign(r.vehicle_id)}</span>
+            <span class="mono" style="color:var(--muted); font-weight:400; font-size:11px">
+              ${r.distance.toFixed(2)} km · ${r.time.toFixed(0)} min · load ${r.load.toFixed(1)} · ${stops} stops
+            </span>
+          </div>
+          <div class="reasoning">${r.reasoning}</div>
+        </div>`;
+      }).join("");
+
+      const trace = {
+        x: data.convergence.map((_, i) => i),
+        y: data.convergence,
+        mode: "lines", line: { color: "#22d3ee", width: 2 }, name: "gbest",
+      };
+      const layout = {
+        margin: { t: 30, b: 40, l: 60, r: 20 },
+        title: { text: "gbest convergence", font: { color: "#e2e8f0", size: 13 } },
+        paper_bgcolor: "#1e293b", plot_bgcolor: "#1e293b",
+        font: { color: "#e2e8f0", size: 11 },
+        xaxis: { title: "iteration", gridcolor: "#334155" },
+        yaxis: { title: "Z_search", gridcolor: "#334155" },
+      };
+      Plotly.newPlot("convergence", [trace], layout, { displayModeBar: false, responsive: true });
+
+      emitSolverLog(data, currentRequest);
+    }
+
+    // ── Traffic-shock demo (Module 5a live warm-start) ─────────────────
+    let shockOverlay = [];
+
+    function flashShockedEdges(edgePairs) {
+      const nodeById = {};
+      currentRequest.network.nodes.forEach(n => { nodeById[n.id] = n; });
+      shockOverlay.forEach(l => map.removeLayer(l));
+      shockOverlay = [];
+      edgePairs.forEach(([i, j]) => {
+        const a = nodeById[i], b = nodeById[j];
+        if (!a || !b) return;
+        const poly = L.polyline([[a.lat, a.lng], [b.lat, b.lng]], {
+          color: "#f87171", weight: 5, opacity: 0.85, dashArray: "6, 6",
+        }).addTo(map);
+        shockOverlay.push(poly);
+      });
+      setTimeout(() => {
+        shockOverlay.forEach(l => map.removeLayer(l));
+        shockOverlay = [];
+      }, 4000);
+    }
+
+    async function runShock() {
+      if (!currentRequest) await loadDemo();
+      readSolverPanel();
+      const btn = document.getElementById("shockBtn");
+      btn.disabled = true;
+      const reqForShock = JSON.parse(JSON.stringify(currentRequest));
+      reqForShock.solver = { ...reqForShock.solver, M: Math.max(32, reqForShock.solver.M || 32),
+                             T: Math.max(500, reqForShock.solver.T || 250) };
+      try {
+        setStatus("Starting async solve…", true);
+        const startRes = await fetch("/solve/async", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reqForShock),
+        });
+        if (!startRes.ok) { setStatus("Async start failed: " + startRes.status); return; }
+        const jobId = (await startRes.json()).job_id;
+
+        const targetIds = currentRequest.network.nodes.slice(1, 7).map(n => n.id);
+        const shockEdges = [];
+        targetIds.forEach(id => {
+          shockEdges.push({ i: 0, j: id, new_vol: 8000.0 });
+          shockEdges.push({ i: id, j: 0, new_vol: 8000.0 });
+        });
+        const shockPreview = targetIds.map(id => [0, id]).concat(targetIds.map(id => [id, 0]));
+
+        await new Promise(r => setTimeout(r, 900));
+        setStatus("Injecting shock on " + shockEdges.length + " edges…", true);
+        flashShockedEdges(shockPreview);
+        const updRes = await fetch("/traffic/update", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job_id: jobId, at_time: 900.0, edges: shockEdges }),
+        });
+        const updJson = await updRes.json();
+        if (updJson.accepted === false) {
+          setStatus("Job finished before shock could be injected — bump T and retry.");
+        }
+
+        let waited = 0;
+        for (;;) {
+          await new Promise(r => setTimeout(r, 300));
+          waited += 0.3;
+          const s = await (await fetch("/solve/status/" + jobId)).json();
+          setStatus("Solving with shock… (" + s.state + ", " + waited.toFixed(1) + "s)", true);
+          if (s.state === "done") break;
+          if (s.state === "error") { setStatus("Solver error: " + s.error); return; }
+          if (waited > 60) { setStatus("Timeout after 60s."); return; }
+        }
+        const result = await (await fetch("/solve/result/" + jobId)).json();
+        renderSolution(result);
+        selectTab("results");
+        setStatus("Shock demo done in " + result.runtime_s.toFixed(2)
+          + "s — warm-start ran mid-flight; routes reoptimized around the shocked edges.");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // ── Wire-up ────────────────────────────────────────────────────────
+    initMap();
+    document.getElementById("solveBtn").addEventListener("click", solve);
+    document.getElementById("loadDemoBtn").addEventListener("click", loadDemo);
+    document.getElementById("scenarioSel").addEventListener("change", loadDemo);
+    document.getElementById("withEvents").addEventListener("change", loadDemo);
+    document.getElementById("shockBtn").addEventListener("click", runShock);
+    document.getElementById("addVehBtn").addEventListener("click", addVehicle);
+    document.querySelectorAll(".tab").forEach(t => {
+      t.addEventListener("click", () => selectTab(t.dataset.tab));
+    });
+    ["w1", "w2", "w3"].forEach((id, idx) => {
+      document.getElementById(id).addEventListener("input", () => normalizeWeights(idx));
+    });
+    // Keyboard shortcuts — tooltip advertises them.
+    document.addEventListener("keydown", (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+      if (e.key === "s" || e.key === "S") { e.preventDefault(); solve(); }
+      else if (e.key === "t" || e.key === "T") { e.preventDefault(); runShock(); }
+      else if (e.key === "r" || e.key === "R") { e.preventDefault(); loadDemo(); }
+      else if (e.key === "e" || e.key === "E") { e.preventDefault(); selectTab("edit"); }
+      else if (e.key === "1")                  { e.preventDefault(); selectTab("results"); }
+    });
+
+    // Auto-load on first paint.
+    loadDemo();
+  </script>
+</body>
+</html>
